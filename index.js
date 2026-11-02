@@ -183,6 +183,32 @@ app.get("/borrows", verifyToken, async (req, res) => {
   res.send(borrows);
 });
 
+app.delete("/borrows/:id", verifyToken, async (req, res) => {
+  const { id } = req.params;
+
+  if (!ObjectId.isValid(id)) {
+    return res.status(404).send({ message: "This borrow record was not found." });
+  }
+
+  const borrow = await borrowsCollection.findOneAndDelete({
+    _id: new ObjectId(id),
+    userEmail: req.user.email,
+  });
+
+  if (!borrow) {
+    return res.status(404).send({ message: "This borrow record was not found." });
+  }
+
+  if (ObjectId.isValid(borrow.bookId)) {
+    await booksCollection.updateOne(
+      { _id: new ObjectId(borrow.bookId) },
+      { $inc: { availableCopies: 1 } }
+    );
+  }
+
+  res.send({ message: "Book returned", _id: id });
+});
+
 if (process.env.NODE_ENV !== "production") {
   app.listen(port, () => {
     console.log(`BookNook server running on http://localhost:${port}`);
