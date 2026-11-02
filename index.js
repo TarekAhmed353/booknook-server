@@ -19,7 +19,10 @@ const client = new MongoClient(process.env.MONGODB_URI, {
 });
 
 const db = client.db("booknook");
+const booksCollection = db.collection("books");
 const borrowsCollection = db.collection("borrows");
+
+const categories = ["Fiction", "Science", "History", "Kids", "Others"];
 
 const JWKS = createRemoteJWKSet(new URL(`${process.env.CLIENT_URL}/api/auth/jwks`));
 
@@ -48,6 +51,38 @@ app.get("/", async (req, res) => {
   } catch (error) {
     res.status(500).send({ message: "BookNook server is running", database: "not connected", error: error.message });
   }
+});
+
+app.post("/books", verifyToken, async (req, res) => {
+  const { title, author, category, image, description, totalCopies } = req.body;
+  const copies = Number(totalCopies);
+
+  if (
+    !title?.trim() ||
+    !author?.trim() ||
+    !image ||
+    !description?.trim() ||
+    !categories.includes(category) ||
+    !Number.isInteger(copies) ||
+    copies < 1
+  ) {
+    return res.status(400).send({ message: "Please fill in every field with valid values." });
+  }
+
+  const book = {
+    title: title.trim(),
+    author: author.trim(),
+    category,
+    image,
+    description: description.trim(),
+    totalCopies: copies,
+    availableCopies: copies,
+    addedBy: { name: req.user.name, email: req.user.email },
+    createdAt: new Date(),
+  };
+
+  const result = await booksCollection.insertOne(book);
+  res.status(201).send({ ...book, _id: result.insertedId });
 });
 
 app.get("/borrows", verifyToken, async (req, res) => {
