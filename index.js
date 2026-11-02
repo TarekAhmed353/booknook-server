@@ -45,6 +45,55 @@ const verifyToken = async (req, res, next) => {
   }
 };
 
+const readBookInput = (body) => {
+  const { title, author, category, image, description, totalCopies } = body;
+  const copies = Number(totalCopies);
+
+  if (
+    !title?.trim() ||
+    !author?.trim() ||
+    !image ||
+    !description?.trim() ||
+    !categories.includes(category) ||
+    !Number.isInteger(copies) ||
+    copies < 1
+  ) {
+    return null;
+  }
+
+  return {
+    title: title.trim(),
+    author: author.trim(),
+    category,
+    image,
+    description: description.trim(),
+    totalCopies: copies,
+  };
+};
+
+const findOwnBook = async (req, res) => {
+  const { id } = req.params;
+
+  if (!ObjectId.isValid(id)) {
+    res.status(404).send({ message: "Book not found" });
+    return null;
+  }
+
+  const book = await booksCollection.findOne({ _id: new ObjectId(id) });
+
+  if (!book) {
+    res.status(404).send({ message: "Book not found" });
+    return null;
+  }
+
+  if (book.addedBy.email !== req.user.email) {
+    res.status(403).send({ message: "You can only change books that you added." });
+    return null;
+  }
+
+  return book;
+};
+
 app.get("/", async (req, res) => {
   try {
     await db.command({ ping: 1 });
@@ -93,35 +142,70 @@ app.get("/books/:id", verifyToken, async (req, res) => {
 });
 
 app.post("/books", verifyToken, async (req, res) => {
-  const { title, author, category, image, description, totalCopies } = req.body;
-  const copies = Number(totalCopies);
+  const input = readBookInput(req.body);
 
-  if (
-    !title?.trim() ||
-    !author?.trim() ||
-    !image ||
-    !description?.trim() ||
-    !categories.includes(category) ||
-    !Number.isInteger(copies) ||
-    copies < 1
-  ) {
+  if (!input) {
     return res.status(400).send({ message: "Please fill in every field with valid values." });
   }
 
   const book = {
-    title: title.trim(),
-    author: author.trim(),
-    category,
-    image,
-    description: description.trim(),
-    totalCopies: copies,
-    availableCopies: copies,
+    ...input,
+    availableCopies: input.totalCopies,
     addedBy: { name: req.user.name, email: req.user.email },
     createdAt: new Date(),
   };
 
   const result = await booksCollection.insertOne(book);
   res.status(201).send({ ...book, _id: result.insertedId });
+});
+
+app.patch("/books/:id", verifyToken, async (req, res) => {
+  const book = await findOwnBook(req, res);
+  if (!book) return;
+
+  const input = readBookInput(req.body);
+
+  if (!input) {
+    return res.status(400).send({ message: "Please fill in every field with valid values." });
+  }
+
+  const borrowedCount = book.totalCopies - book.availableCopies;
+
+  if (input.totalCopies < borrowedCount) {
+    const words = borrowedCount === 1 ? "copy is" : "copies are";
+    return res.status(400).send({
+      message: `${borrowedCount} ${words} borrowed right now, so Total Copies cannot be lower than ${borrowedCount}.`,
+    });
+  }
+
+  const updatedBook = await booksCollection.findOneAndUpdate(
+    { _id: book._id },
+    {
+      $set: {
+        ...input,
+        availableCopies: input.totalCopies - borrowedCount,
+        updatedAt: new Date(),
+      },
+    },
+    { returnDocument: "after" }
+  );
+
+  await borrowsCollection.updateMany(
+    { bookId: req.params.id },
+    { $set: { bookTitle: input.title, bookImage: input.image } }
+  );
+
+  res.send(updatedBook);
+});
+
+app.delete("/books/:id", verifyToken, async (req, res) => {
+  const book = await findOwnBook(req, res);
+  if (!book) return;
+
+  await booksCollection.deleteOne({ _id: book._id });
+  await borrowsCollection.deleteMany({ bookId: req.params.id });
+
+  res.send({ message: "Book deleted", _id: req.params.id });
 });
 
 app.post("/borrows", verifyToken, async (req, res) => {
