@@ -23,6 +23,7 @@ const booksCollection = db.collection("books");
 const borrowsCollection = db.collection("borrows");
 
 const categories = ["Fiction", "Science", "History", "Kids", "Others"];
+const BORROW_DAYS = 7;
 
 const JWKS = createRemoteJWKSet(new URL(`${process.env.CLIENT_URL}/api/auth/jwks`));
 
@@ -121,6 +122,57 @@ app.post("/books", verifyToken, async (req, res) => {
 
   const result = await booksCollection.insertOne(book);
   res.status(201).send({ ...book, _id: result.insertedId });
+});
+
+app.post("/borrows", verifyToken, async (req, res) => {
+  const { bookId } = req.body;
+
+  if (!ObjectId.isValid(bookId)) {
+    return res.status(400).send({ message: "This book could not be found." });
+  }
+
+  const book = await booksCollection.findOne({ _id: new ObjectId(bookId) });
+
+  if (!book) {
+    return res.status(404).send({ message: "This book could not be found." });
+  }
+
+  const alreadyBorrowed = await borrowsCollection.findOne({
+    bookId,
+    userEmail: req.user.email,
+  });
+
+  if (alreadyBorrowed) {
+    return res
+      .status(409)
+      .send({ message: "You have already borrowed this book. Return it before borrowing again." });
+  }
+
+  const updatedBook = await booksCollection.findOneAndUpdate(
+    { _id: book._id, availableCopies: { $gt: 0 } },
+    { $inc: { availableCopies: -1 } },
+    { returnDocument: "after" }
+  );
+
+  if (!updatedBook) {
+    return res.status(409).send({ message: "Sorry, no copies of this book are available right now." });
+  }
+
+  const borrowDate = new Date();
+  const returnDate = new Date(borrowDate.getTime() + BORROW_DAYS * 24 * 60 * 60 * 1000);
+
+  const borrow = {
+    bookId,
+    bookTitle: book.title,
+    bookImage: book.image,
+    userEmail: req.user.email,
+    userName: req.user.name,
+    borrowDate,
+    returnDate,
+  };
+
+  const result = await borrowsCollection.insertOne(borrow);
+  res.status(201).send({ ...borrow, _id: result.insertedId, availableCopies: updatedBook.availableCopies });
 });
 
 app.get("/borrows", verifyToken, async (req, res) => {
