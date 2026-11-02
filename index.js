@@ -1,7 +1,7 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
-import { MongoClient, ServerApiVersion } from "mongodb";
+import { MongoClient, ObjectId, ServerApiVersion } from "mongodb";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 
 const app = express();
@@ -51,6 +51,44 @@ app.get("/", async (req, res) => {
   } catch (error) {
     res.status(500).send({ message: "BookNook server is running", database: "not connected", error: error.message });
   }
+});
+
+app.get("/books", async (req, res) => {
+  const { category, email, limit } = req.query;
+  const filter = {};
+
+  if (category && categories.includes(category)) {
+    filter.category = category;
+  }
+  if (email) {
+    filter["addedBy.email"] = email;
+  }
+
+  let cursor = booksCollection.find(filter).sort({ createdAt: -1 });
+
+  const max = Number(limit);
+  if (Number.isInteger(max) && max > 0) {
+    cursor = cursor.limit(max);
+  }
+
+  const books = await cursor.toArray();
+  res.send(books);
+});
+
+app.get("/books/:id", verifyToken, async (req, res) => {
+  const { id } = req.params;
+
+  if (!ObjectId.isValid(id)) {
+    return res.status(404).send({ message: "Book not found" });
+  }
+
+  const book = await booksCollection.findOne({ _id: new ObjectId(id) });
+
+  if (!book) {
+    return res.status(404).send({ message: "Book not found" });
+  }
+
+  res.send(book);
 });
 
 app.post("/books", verifyToken, async (req, res) => {
